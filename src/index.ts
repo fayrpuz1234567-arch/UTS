@@ -1,12 +1,19 @@
+// ✅ لازم dotenv.config() يتنادى قبل أي import تاني بيستخدم process.env (زي
+// d1.config.ts). لو نده عليه بعد الـ imports (زي ما كان قبل كده)، الموديولات
+// اللي بتتحمّل قبله (auth.middleware → repositories → D1) هتلاقي متغيرات
+// البيئة لسه فاضية ولو ده اللي كان بيسبب خطأ "Missing Cloudflare D1
+// credentials" حتى لو ملف .env نفسه مظبوط صح.
+import dotenv from 'dotenv';
+dotenv.config();
+
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import compression from 'compression';
 import rateLimit from 'express-rate-limit';
-import dotenv from 'dotenv';
 import { logger } from './core/utils/logger';
 import { errorHandler } from './core/middleware/error.middleware';
-import { initializeFirebase } from './core/config/firebase.config';
+import { initializeD1 } from './core/config/d1.config';
 import { authenticate, requirePageAccess } from './core/middleware/auth.middleware';
 import { AuditService } from './modules/audit/services/audit.service';
 
@@ -48,11 +55,8 @@ import { employeeRouter } from './modules/employees/routes';
 // ✅ Calendar Plans Module — مواعيد التقويم (بدل التخزين المحلي IndexedDB)
 import { calendarPlansRouter } from './modules/calendar-plans/routes';
 
-// Load environment variables
-dotenv.config();
-
-// Initialize Firebase first
-initializeFirebase();
+// Initialize Cloudflare D1 first
+initializeD1();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -218,7 +222,7 @@ app.get('/health', (req: Request, res: Response) => {
     uptime: process.uptime(),
     memory: process.memoryUsage(),
     version: '2.0.0',
-    firebase: 'connected',
+    database: 'connected (Cloudflare D1)',
     modules: 25,
     cors: 'enabled'
   });

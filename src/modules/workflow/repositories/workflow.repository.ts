@@ -1,4 +1,5 @@
 import BaseRepository from '../../../core/repositories/base.repository';
+import { D1Query } from '../../../core/config/d1.config';
 import { Workflow, WorkflowInstance } from '../models/workflow.model';
 
 export class WorkflowRepository extends BaseRepository<Workflow> {
@@ -55,7 +56,7 @@ export class WorkflowRepository extends BaseRepository<Workflow> {
 
   async getAllInstances(filter?: any): Promise<WorkflowInstance[]> {
     const db = this.db;
-    let query: FirebaseFirestore.Query = db.collection('workflow_instances');
+    let query: D1Query = db.collection('workflow_instances');
     query = query.where('isDeleted', '==', false);
 
     if (filter) {

@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { asyncHandler } from '../../../core/middleware/error.middleware';
-import { getFirestore } from '../../../core/config/firebase.config';
+import { getFirestore } from '../../../core/config/d1.config';
 
 const db = getFirestore();
 

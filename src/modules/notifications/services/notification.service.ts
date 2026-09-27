@@ -14,8 +14,8 @@ import {
 import { AppError } from '../../../core/middleware/error.middleware';
 import { logger } from '../../../core/utils/logger';
 
-// Firebase Admin for push notifications
-import { getMessaging } from '../../../core/config/firebase.config';
+// Firebase Admin مستخدم هنا فقط لإرسال الإشعارات (FCM) - مش قاعدة البيانات
+import { getMessaging } from '../../../core/config/messaging.config';
 
 // ✅ استيراد الريبوزتوري للموردين والمركبات والسائقين
 import { SupplierRepository } from '../../suppliers/repositories/supplier.repository';

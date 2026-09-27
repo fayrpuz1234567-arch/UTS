@@ -1,4 +1,4 @@
-import { getFirestore } from '../config/firebase.config';
+import { getFirestore, D1Database, D1Collection, D1Query } from '../config/d1.config';
 import { logger } from '../utils/logger';
 import { v4 as uuidv4 } from 'uuid';
 import { getRequestContext } from '../utils/request-context';
@@ -99,8 +99,8 @@ export interface PaginatedResponse<T> {
 }
 
 export abstract class BaseRepository<T> implements IRepository<T> {
-  protected collection: FirebaseFirestore.CollectionReference;
-  protected db: FirebaseFirestore.Firestore;
+  protected collection: D1Collection;
+  protected db: D1Database;
 
   constructor(collectionName: string) {
     this.db = getFirestore();
@@ -229,7 +229,7 @@ export abstract class BaseRepository<T> implements IRepository<T> {
    */
   async findAll(options?: QueryOptions): Promise<T[]> {
     try {
-      let query: FirebaseFirestore.Query = this.collection;
+      let query: D1Query = this.collection;
 
       if (options?.filter) {
         query = this.applyFilters(query, options.filter);
@@ -375,7 +375,7 @@ export abstract class BaseRepository<T> implements IRepository<T> {
    */
   async findOne(filter: FilterOptions): Promise<T | null> {
     try {
-      let query: FirebaseFirestore.Query = this.collection;
+      let query: D1Query = this.collection;
       query = this.applyFilters(query, filter);
       // نجيب أكتر من مستند واحد احتياطًا لوجود مستندات محذوفة ضمن أول النتائج
       query = query.limit(20);
@@ -400,7 +400,7 @@ export abstract class BaseRepository<T> implements IRepository<T> {
    */
   async count(filter?: FilterOptions): Promise<number> {
     try {
-      let query: FirebaseFirestore.Query = this.collection;
+      let query: D1Query = this.collection;
       if (filter) {
         query = this.applyFilters(query, filter);
       }
@@ -428,7 +428,7 @@ export abstract class BaseRepository<T> implements IRepository<T> {
     }
   }
 
-  protected applyFilters(query: FirebaseFirestore.Query, filters: FilterOptions): FirebaseFirestore.Query {
+  protected applyFilters(query: D1Query, filters: FilterOptions): D1Query {
     Object.entries(filters).forEach(([key, value]) => {
       if (typeof value === 'object' && value !== null) {
         if (value.$gt !== undefined) {

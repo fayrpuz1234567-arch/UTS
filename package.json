@@ -13,6 +13,8 @@
     "format": "prettier --write src/**/*.ts",
     "import": "ts-node scripts/run-import.ts",
     "import:data": "ts-node scripts/import-data.ts",
+    "import:cmt1-report": "ts-node scripts/import-cmt1-report.ts",
+    "import:cmt1-parts": "ts-node scripts/import-cmt1-parts.ts",
     "seed": "ts-node scripts/seed-database.ts"
   },
   "dependencies": {
