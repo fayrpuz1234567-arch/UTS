@@ -155,6 +155,72 @@ export class UserService {
     return this.userRepo.findByRole(role);
   }
 
+  // ✅ تعديل الحساب لنفسه (الاسم الكامل + رقم الهاتف فقط). اسم المستخدم والبريد
+  // والأدوار والصلاحيات والحالة ممنوع تتغير من هنا نهائيًا (whitelist)، عشان أي
+  // حساب (حتى المشاهد) ميقدرش يرفع صلاحياته عن طريق body الطلب.
+  async updateMyProfile(id: string, data: { fullName?: string; phone?: string }): Promise<Omit<User, 'passwordHash'>> {
+    await this.getUser(id);
+    const updates: Partial<User> = {};
+
+    if (data.fullName !== undefined) {
+      const fullName = String(data.fullName).trim();
+      if (!fullName) {
+        throw new AppError('الاسم الكامل مطلوب', 400);
+      }
+      if (fullName.length > 100) {
+        throw new AppError('الاسم الكامل طويل جدًا', 400);
+      }
+      updates.fullName = fullName;
+    }
+
+    if (data.phone !== undefined) {
+      const phone = String(data.phone).trim();
+      if (phone && !/^[0-9+\-\s()]{6,20}$/.test(phone)) {
+        throw new AppError('رقم الهاتف غير صالح', 400);
+      }
+      updates.phone = phone;
+    }
+
+    if (Object.keys(updates).length === 0) {
+      throw new AppError('لا توجد بيانات لتحديثها', 400);
+    }
+
+    const updated = await this.userRepo.update(id, { ...updates, updatedBy: id });
+    if (!updated) {
+      throw new AppError('Failed to update profile', 500);
+    }
+    logger.info(`Profile updated by owner: ${updated.username}`);
+    const { passwordHash, ...profile } = updated;
+    return profile;
+  }
+
+  // ✅ تغيير الباسورد للحساب الحالي: لازم الباسورد الحالي صح، والجديد 6 حروف
+  // على الأقل ومختلف عن القديم. بيتخزّن bcrypt hash في قاعدة البيانات.
+  async changeMyPassword(id: string, currentPassword: string, newPassword: string): Promise<void> {
+    if (!currentPassword || !newPassword) {
+      throw new AppError('كلمة المرور الحالية والجديدة مطلوبتان', 400);
+    }
+    if (String(newPassword).length < 6) {
+      throw new AppError('كلمة المرور الجديدة يجب ألا تقل عن 6 أحرف', 400);
+    }
+    if (currentPassword === newPassword) {
+      throw new AppError('كلمة المرور الجديدة يجب أن تختلف عن الحالية', 400);
+    }
+    const user = await this.getUser(id);
+    const isMatch = await bcrypt.compare(String(currentPassword), user.passwordHash);
+    if (!isMatch) {
+      // 400 (مش 401) عشان الفرونت ما يعتبرها انتهاء جلسة ويعمل تسجيل خروج
+      throw new AppError('كلمة المرور الحالية غير صحيحة', 400);
+    }
+    const salt = await bcrypt.genSalt(10);
+    const newPasswordHash = await bcrypt.hash(String(newPassword), salt);
+    const updated = await this.userRepo.resetPassword(id, newPasswordHash);
+    if (!updated) {
+      throw new AppError('Failed to change password', 500);
+    }
+    logger.info(`Password changed by owner: ${updated.username}`);
+  }
+
   async getProfile(id: string): Promise<Omit<User, 'passwordHash'>> {
     const user = await this.getUser(id);
     const { passwordHash, ...profile } = user;

@@ -32,9 +32,15 @@ export class AuthController {
   });
 
   profile = asyncHandler(async (req: Request, res: Response) => {
+    const userId = req.user?.id;
+    if (!userId) {
+      res.status(401).json({ success: false, message: 'Unauthorized' });
+      return;
+    }
+    const profile = await this.authService.getProfile(userId);
     res.json({
       success: true,
-      data: req.user
+      data: profile
     });
   });
 }

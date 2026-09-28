@@ -66,6 +66,9 @@ router.get('/:id/export', authenticate, requirePageAccess('reports'), reportsCon
 // ===== Advanced Report Routes =====
 // ============================================================
 
+// ===== التقرير الشامل المجمّع (كل التقارير في ملف Excel واحد) =====
+router.get('/comprehensive/:startDate/:endDate/excel', authenticate, requirePageAccess('reports'), reportsController.getAllReportsExcel);
+
 // 1. تقرير الصيانة
 
 // ===== تقرير السائقين (إيجارات) مع فلتر من / إلى =====

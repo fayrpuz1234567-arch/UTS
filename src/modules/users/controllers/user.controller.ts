@@ -174,6 +174,28 @@ export class UserController {
     res.json({ success: true, data: profile });
   });
 
+  updateProfile = asyncHandler(async (req: Request, res: Response): Promise<void> => {
+    const userId = req.user?.id;
+    if (!userId) {
+      res.status(401).json({ success: false, message: 'Unauthorized' });
+      return;
+    }
+    const { fullName, phone } = req.body || {};
+    const profile = await this.userService.updateMyProfile(userId, { fullName, phone });
+    res.json({ success: true, message: 'تم تحديث البيانات الشخصية بنجاح', data: profile });
+  });
+
+  changeMyPassword = asyncHandler(async (req: Request, res: Response): Promise<void> => {
+    const userId = req.user?.id;
+    if (!userId) {
+      res.status(401).json({ success: false, message: 'Unauthorized' });
+      return;
+    }
+    const { currentPassword, newPassword } = req.body || {};
+    await this.userService.changeMyPassword(userId, currentPassword, newPassword);
+    res.json({ success: true, message: 'تم تغيير كلمة المرور بنجاح' });
+  });
+
   getByStatus = asyncHandler(async (req: Request, res: Response): Promise<void> => {
     const { status } = req.params;
     const users = await this.userService.getUsersByStatus(status);

@@ -161,15 +161,10 @@ class D1DocRef {
 // ✅ توافق مع شكل Firestore: QuerySnapshot
 // ============================================================
 class D1QuerySnapshot {
-  public readonly docs: Array<{ id: string; exists: true; ref: D1DocRef; data: () => any }>;
+  public readonly docs: Array<{ id: string; exists: true; data: () => any }>;
 
-  constructor(rows: Array<{ id: string; data: any }>, collectionName: string) {
-    this.docs = rows.map(r => ({
-      id: r.id,
-      exists: true as const,
-      ref: new D1DocRef(collectionName, r.id),
-      data: () => r.data
-    }));
+  constructor(rows: Array<{ id: string; data: any }>) {
+    this.docs = rows.map(r => ({ id: r.id, exists: true as const, data: () => r.data }));
   }
 
   get size(): number {
@@ -192,16 +187,8 @@ interface OrderClause {
   direction: 'asc' | 'desc';
 }
 
-// ✅ بيدعم حقول متداخلة بنقطة زي Firestore (مثلاً 'metadata.importSource')
-// عشان سكريبتات الاستيراد اللي بتستخدم .where('metadata.importSource', ...) تشتغل صح
-const getNestedValue = (data: any, path: string): any => {
-  if (!data) return undefined;
-  if (!path.includes('.')) return data[path];
-  return path.split('.').reduce((acc, key) => (acc == null ? undefined : acc[key]), data);
-};
-
 const matchWhere = (data: any, clause: WhereClause): boolean => {
-  const value = getNestedValue(data, clause.field);
+  const value = data ? data[clause.field] : undefined;
   switch (clause.op) {
     case '==':
       return value === clause.value;
@@ -287,7 +274,7 @@ class D1Query {
       docs = docs.slice(0, this.limitCount);
     }
 
-    return new D1QuerySnapshot(docs, this.collectionName);
+    return new D1QuerySnapshot(docs);
   }
 }
 
@@ -305,68 +292,16 @@ class D1Collection extends D1Query {
 }
 
 // ============================================================
-// ✅ توافق مع شكل Firestore: WriteBatch (db.batch())
-// ============================================================
-// ملحوظة: D1 (عن طريق REST API زي ما بنستخدمه هنا) مش بيدعم batch/transaction
-// حقيقية زي Firestore، فالعمليات دي بتتنفذ فعليًا واحدة واحدة، لكن بنشغّل
-// مجموعة منها في نفس الوقت (병렬/parallel بحد أقصى معين) عشان نسرّع
-// سكريبتات الاستيراد اللي فيها آلاف السجلات، من غير ما نغرق سيرفر
-// Cloudflare بآلاف الطلبات في نفس اللحظة.
-type BatchOp =
-  | { type: 'set'; ref: D1DocRef; data: any }
-  | { type: 'update'; ref: D1DocRef; data: any }
-  | { type: 'delete'; ref: D1DocRef };
-
-const BATCH_CONCURRENCY = 20;
-
-class D1WriteBatch {
-  private ops: BatchOp[] = [];
-
-  set(ref: D1DocRef, data: any): D1WriteBatch {
-    this.ops.push({ type: 'set', ref, data });
-    return this;
-  }
-
-  update(ref: D1DocRef, data: any): D1WriteBatch {
-    this.ops.push({ type: 'update', ref, data });
-    return this;
-  }
-
-  delete(ref: D1DocRef): D1WriteBatch {
-    this.ops.push({ type: 'delete', ref });
-    return this;
-  }
-
-  async commit(): Promise<void> {
-    for (let i = 0; i < this.ops.length; i += BATCH_CONCURRENCY) {
-      const chunk = this.ops.slice(i, i + BATCH_CONCURRENCY);
-      await Promise.all(
-        chunk.map(op => {
-          if (op.type === 'set') return op.ref.set(op.data);
-          if (op.type === 'update') return op.ref.update(op.data);
-          return op.ref.delete();
-        })
-      );
-    }
-    this.ops = [];
-  }
-}
-
-// ============================================================
 // ✅ توافق مع شكل Firestore: Firestore (الجذر db.collection(...))
 // ============================================================
 class D1Database {
   collection(name: string): D1Collection {
     return new D1Collection(name);
   }
-
-  batch(): D1WriteBatch {
-    return new D1WriteBatch();
-  }
 }
 
 // أنواع مساعدة تستخدم بدل FirebaseFirestore.* في باقي الكود
-export type { D1Database, D1Collection, D1Query, D1DocRef, D1DocSnapshot, D1QuerySnapshot, D1WriteBatch };
+export type { D1Database, D1Collection, D1Query, D1DocRef, D1DocSnapshot, D1QuerySnapshot };
 
 let d1db: D1Database | null = null;
 

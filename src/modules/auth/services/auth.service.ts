@@ -63,6 +63,18 @@ export class AuthService {
     };
   }
 
+  // ✅ بيانات البروفايل من قاعدة البيانات مباشرة (مش من التوكن): التوكن مافيهوش
+  // الاسم الكامل ولا رقم الهاتف، وبيفضل قديم لحد ما يخلص. كده الصفحة دايمًا
+  // تعرض القيم الفعلية المحفوظة، ومن غير passwordHash أبدًا.
+  async getProfile(userId: string): Promise<Omit<User, 'passwordHash'>> {
+    const user = await this.userRepo.findById(userId);
+    if (!user) {
+      throw new AppError('User not found', 404);
+    }
+    const { passwordHash, ...profile } = user;
+    return profile;
+  }
+
   async register(userData: CreateUserDTO): Promise<User> {
     // Check if user exists
     const existingUser = await this.userRepo.findByEmail(userData.email);

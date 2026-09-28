@@ -1,10 +1,10 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { initializeD1, getFirestore } from '../src/core/config/d1.config';
+import { initializeFirebase, getFirestore } from '../src/core/config/firebase.config';
 import { logger } from '../src/core/utils/logger';
 
-// Initialize Cloudflare D1 (كان قبل كده Firebase)
-initializeD1();
+// Initialize Firebase
+initializeFirebase();
 const db = getFirestore();
 
 // ===== Helper Functions =====

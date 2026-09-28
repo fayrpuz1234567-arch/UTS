@@ -16,7 +16,8 @@ const userController = new UserController(userService);
 
 // Profile (self) - إجراء شخصي متاح لأي حساب حتى "مشاهدة فقط"
 router.get('/profile', authenticate, userController.getProfile);
-router.put('/profile/password', authenticate, userController.changePassword);
+router.put('/profile', authenticate, userController.updateProfile);
+router.put('/profile/password', authenticate, userController.changeMyPassword);
 
 // ✅ لوحة إدارة الحسابات والصلاحيات مخصصة للسوبر أدمن فقط
 // (إنشاء/تعديل/حذف الحسابات، الاطّلاع على القائمة، تحديد الصفحات المسموح بها)

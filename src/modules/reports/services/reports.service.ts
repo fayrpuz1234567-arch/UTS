@@ -2687,6 +2687,419 @@ export class ReportsService {
   }
 
   // ============================================================
+  // ===== التقرير الشامل المجمّع (كل التقارير في ملف Excel واحد) =====
+  // ============================================================
+  // ملف Excel واحد فيه:
+  //  - شيت "الفهرس": قائمة بكل التقارير + عدد السجلات + رابط للشيت
+  //  - شيت لكل تقرير بنفس أعمدته حرفيًا (نفس تقارير صفحة التقارير)
+  //  - في آخر كل شيت صف "الإجمالي" فيه مجموع كل عمود رقمي (SUM حي)
+  // ملحوظة: تقارير "الأعلى تكلفة" و"الأعلى استهلاكًا" بتتجاب هنا كاملة
+  // (من غير حد الـ 10 بتاع التقرير المنفرد).
+
+  private async buildAllReportsSections(
+    startDate: string,
+    endDate: string
+  ): Promise<
+    Array<{
+      sheetName: string;
+      title: string;
+      headers: string[];
+      rows: any[];
+      sumColumns: string[];
+      customTotals?: (rows: any[]) => Record<string, number>;
+      error?: string;
+    }>
+  > {
+    type Section = {
+      sheetName: string;
+      title: string;
+      headers: string[];
+      rows: any[];
+      sumColumns: string[];
+      customTotals?: (rows: any[]) => Record<string, number>;
+      error?: string;
+    };
+    const sections: Section[] = [];
+
+    // يحوّل details (مفاتيح إنجليزي) لصفوف بعناوين عربي
+    const mapRows = (details: any[], keys: string[], arabic: string[]): any[] =>
+      (details || []).map((d: any) => {
+        const row: any = {};
+        keys.forEach((k, i) => (row[arabic[i]] = d?.[k]));
+        return row;
+      });
+
+    // لو تقرير فشل ما نوقّفش باقي الملف — بنسجّل الخطأ في الفهرس
+    const add = async (
+      sheetName: string,
+      title: string,
+      headers: string[],
+      sumColumns: string[],
+      build: () => Promise<any[]>,
+      customTotals?: (rows: any[]) => Record<string, number>
+    ): Promise<void> => {
+      try {
+        const rows = await build();
+        sections.push({ sheetName, title, headers, rows: rows || [], sumColumns, customTotals });
+      } catch (error: any) {
+        logger.error(`Error building "${title}" for comprehensive report:`, error);
+        sections.push({
+          sheetName,
+          title,
+          headers,
+          rows: [],
+          sumColumns,
+          error: error?.message || 'تعذر تحميل هذا التقرير',
+        });
+      }
+    };
+
+    const ALL = Number.MAX_SAFE_INTEGER;
+
+    // 1) الصيانة
+    await add(
+      'الصيانة', 'تقرير الصيانة',
+      ['رقم طلب الإصلاح', 'رقم السيارة', 'المشكلة', 'تاريخ البداية', 'تاريخ النهاية', 'الحالة', 'تكلفة العمالة', 'تكلفة قطع الغيار', 'الإجمالي'],
+      ['تكلفة العمالة', 'تكلفة قطع الغيار', 'الإجمالي'],
+      async () => {
+        const data = await this.generateMaintenanceReport(startDate, endDate);
+        return mapRows(
+          data.details,
+          ['orderNumber', 'vehicleId', 'problem', 'startDate', 'endDate', 'status', 'laborCost', 'partsCost', 'totalCost'],
+          ['رقم طلب الإصلاح', 'رقم السيارة', 'المشكلة', 'تاريخ البداية', 'تاريخ النهاية', 'الحالة', 'تكلفة العمالة', 'تكلفة قطع الغيار', 'الإجمالي']
+        );
+      }
+    );
+
+    // 2) استهلاك قطع الغيار
+    await add(
+      'قطع الغيار', 'تقرير استهلاك قطع الغيار',
+      ['اسم القطعة', 'كود القطعة', 'إجمالي الكمية المستخدمة', 'إجمالي التكلفة'],
+      ['إجمالي الكمية المستخدمة', 'إجمالي التكلفة'],
+      async () => {
+        const data = await this.generatePartsConsumptionReport(startDate, endDate);
+        return mapRows(
+          data.details,
+          ['partName', 'partCode', 'totalQuantity', 'totalCost'],
+          ['اسم القطعة', 'كود القطعة', 'إجمالي الكمية المستخدمة', 'إجمالي التكلفة']
+        );
+      }
+    );
+
+    // 3) تكاليف الصيانة
+    await add(
+      'تكاليف الصيانة', 'تقرير تكاليف الصيانة',
+      ['رقم السيارة', 'عدد أوامر الصيانة', 'تكلفة العمالة', 'تكلفة قطع الغيار', 'الإجمالي'],
+      ['عدد أوامر الصيانة', 'تكلفة العمالة', 'تكلفة قطع الغيار', 'الإجمالي'],
+      async () => {
+        const data = await this.generateMaintenanceCostReport(startDate, endDate);
+        return mapRows(
+          data.vehicles,
+          ['vehicleId', 'totalOrders', 'totalLaborCost', 'totalPartsCost', 'totalCost'],
+          ['رقم السيارة', 'عدد أوامر الصيانة', 'تكلفة العمالة', 'تكلفة قطع الغيار', 'الإجمالي']
+        );
+      }
+    );
+
+    // 4) المصروفات
+    await add(
+      'المصروفات', 'تقرير المصروفات',
+      ['تكلفة الوقود', 'تكلفة الصيانة', 'تكلفة قطع الغيار', 'تكلفة المشتريات', 'إجمالي المصروفات', 'عدد سجلات الوقود', 'عدد أوامر الصيانة', 'عدد حركات قطع الغيار', 'عدد أوامر الشراء'],
+      ['تكلفة الوقود', 'تكلفة الصيانة', 'تكلفة قطع الغيار', 'تكلفة المشتريات', 'إجمالي المصروفات', 'عدد سجلات الوقود', 'عدد أوامر الصيانة', 'عدد حركات قطع الغيار', 'عدد أوامر الشراء'],
+      async () => {
+        const data = await this.getExpensesReport(startDate, endDate);
+        return [
+          {
+            'تكلفة الوقود': data.summary.fuelCost,
+            'تكلفة الصيانة': data.summary.maintenanceCost,
+            'تكلفة قطع الغيار': data.summary.partsCost,
+            'تكلفة المشتريات': data.summary.purchaseCost,
+            'إجمالي المصروفات': data.summary.totalExpenses,
+            'عدد سجلات الوقود': data.details.fuelLogs,
+            'عدد أوامر الصيانة': data.details.maintenanceOrders,
+            'عدد حركات قطع الغيار': data.details.partsTransactions,
+            'عدد أوامر الشراء': data.details.purchaseOrders,
+          },
+        ];
+      }
+    );
+
+    // 5) السيارات الأعلى تكلفة (كاملة)
+    await add(
+      'الأعلى تكلفة', 'السيارات الأعلى تكلفة',
+      ['رقم السيارة', 'تكلفة الصيانة', 'تكلفة الوقود', 'تكلفة قطع الغيار', 'الإجمالي'],
+      ['تكلفة الصيانة', 'تكلفة الوقود', 'تكلفة قطع الغيار', 'الإجمالي'],
+      async () => (await this.getTopCostVehicles(startDate, endDate, ALL)).details
+    );
+
+    // 6) الأعطال المتكررة
+    await add(
+      'الأعطال المتكررة', 'الأعطال المتكررة',
+      ['الكلمة الدالة', 'عدد التكرار', 'إجمالي التكلفة', 'عدد السيارات المتأثرة'],
+      ['عدد التكرار', 'إجمالي التكلفة', 'عدد السيارات المتأثرة'],
+      async () => {
+        const data = await this.getFrequentIssuesReport(startDate, endDate);
+        return mapRows(
+          data.details,
+          ['keyword', 'count', 'totalCost', 'vehicleCount'],
+          ['الكلمة الدالة', 'عدد التكرار', 'إجمالي التكلفة', 'عدد السيارات المتأثرة']
+        );
+      }
+    );
+
+    // 7) السيارات الأعلى استهلاكًا للوقود (كاملة)
+    await add(
+      'الأعلى استهلاكا للوقود', 'السيارات الأعلى استهلاكاً للوقود',
+      ['رقم السيارة', 'إجمالي الوقود (لتر)', 'إجمالي التكلفة', 'المسافة (كم)', 'متوسط الاستهلاك (لتر/كم)', 'عدد مرات التعبئة'],
+      ['إجمالي الوقود (لتر)', 'إجمالي التكلفة', 'المسافة (كم)', 'عدد مرات التعبئة'],
+      async () => (await this.getTopFuelConsumptionVehicles(startDate, endDate, ALL)).details,
+      // المتوسط مالوش معنى يتجمع، فبنحسبه من الإجماليات: إجمالي اللترات ÷ إجمالي الكيلومترات
+      (rows) => {
+        const liters = rows.reduce((s, r) => s + (Number(r['إجمالي الوقود (لتر)']) || 0), 0);
+        const km = rows.reduce((s, r) => s + (Number(r['المسافة (كم)']) || 0), 0);
+        return { 'متوسط الاستهلاك (لتر/كم)': km > 0 ? liters / km : 0 };
+      }
+    );
+
+    // 8) الوقود
+    await add(
+      'الوقود', 'تقرير الوقود',
+      ['التاريخ', 'رقم السيارة', 'الكمية (لتر)', 'التكلفة', 'المسافة (كم)'],
+      ['الكمية (لتر)', 'التكلفة', 'المسافة (كم)'],
+      async () => {
+        const data = await this.getFuelReport(startDate, endDate);
+        return mapRows(
+          data.details,
+          ['date', 'vehicleId', 'quantity', 'cost', 'distance'],
+          ['التاريخ', 'رقم السيارة', 'الكمية (لتر)', 'التكلفة', 'المسافة (كم)']
+        );
+      }
+    );
+
+    // 9) السيارات
+    await add(
+      'السيارات', 'تقرير السيارات',
+      ['رقم اللوحة', 'نوع السيارة', 'الموديل', 'سنة الصنع', 'اللون', 'رقم الشاسيه', 'رقم الماتور', 'رقم الكارت', 'المعدل القياسي للاستهلاك', 'صاحب العهدة', 'حالة الرخصة', 'انتهاء الترخيص', 'الحالة'],
+      [],
+      async () => {
+        const data = await this.getVehiclesReport(startDate, endDate);
+        return mapRows(
+          data.details,
+          ['plateNumber', 'vehicleType', 'brand', 'manufactureYear', 'color', 'chassisNumber', 'engineNumber', 'fuelCardNumber', 'standardFuelConsumption', 'assignedTo', 'licenseStatus', 'licenseExpiry', 'status'],
+          ['رقم اللوحة', 'نوع السيارة', 'الموديل', 'سنة الصنع', 'اللون', 'رقم الشاسيه', 'رقم الماتور', 'رقم الكارت', 'المعدل القياسي للاستهلاك', 'صاحب العهدة', 'حالة الرخصة', 'انتهاء الترخيص', 'الحالة']
+        );
+      }
+    );
+
+    // 10) المأموريات
+    await add(
+      'المأموريات', 'تقرير المأموريات',
+      ['رقم أمر الشغل', 'رقم السيارة', 'اسم السائق', 'تاريخ البداية', 'تاريخ النهاية', 'الوجهة', 'الحالة', 'عداد الخروج', 'عداد الدخول', 'المسافة المقطوعة'],
+      ['المسافة المقطوعة'],
+      async () => {
+        const data = await this.getMissionsReport(startDate, endDate);
+        const rows = mapRows(
+          data.details,
+          ['orderNumber', 'vehicleId', 'driverName', 'startDate', 'endDate', 'destination', 'status', 'startKM', 'endKM', 'totalKM'],
+          ['رقم أمر الشغل', 'رقم السيارة', 'اسم السائق', 'تاريخ البداية', 'تاريخ النهاية', 'الوجهة', 'الحالة', 'عداد الخروج', 'عداد الدخول', 'المسافة المقطوعة']
+        );
+        // ✅ نفس منطق صفحة التقارير: لو اسم السائق فاضي نجيبه من جدول السائقين بالـ driverId
+        try {
+          const rawMissions: any[] =
+            ((await this.missionRepo?.findAll({
+              filter: { startDate: { $gte: startDate, $lte: endDate } },
+            })) as any[]) || [];
+          const drivers: any[] = ((await this.driverRepo?.findAll()) as any[]) || [];
+          const nameById = new Map<string, string>();
+          drivers.forEach((d: any) => nameById.set(String(d.id), d.fullName || d.name || String(d.id)));
+          rows.forEach((row: any, i: number) => {
+            const m = rawMissions[i];
+            if (!row['اسم السائق'] && m?.driverId) {
+              row['اسم السائق'] = nameById.get(String(m.driverId)) || String(m.driverId);
+            }
+          });
+        } catch (_e) {
+          /* اسم السائق اختياري — نكمل من غيره */
+        }
+        return rows;
+      }
+    );
+
+    // 11) المخزون
+    await add(
+      'المخزون', 'تقرير المخزون',
+      ['الكود', 'اسم الصنف', 'الرصيد الحالي', 'الحد الأدنى', 'سعر الوحدة', 'القيمة الإجمالية'],
+      ['الرصيد الحالي', 'الحد الأدنى', 'القيمة الإجمالية'],
+      async () => {
+        const data = await this.getInventoryReport(startDate, endDate);
+        return mapRows(
+          data.details,
+          ['code', 'name', 'currentStock', 'minimumStock', 'unitPrice', 'totalValue'],
+          ['الكود', 'اسم الصنف', 'الرصيد الحالي', 'الحد الأدنى', 'سعر الوحدة', 'القيمة الإجمالية']
+        );
+      }
+    );
+
+    // 12) المشتريات
+    await add(
+      'المشتريات', 'تقرير المشتريات',
+      ['رقم أمر الشراء', 'المورد', 'التاريخ', 'الإجمالي', 'الحالة'],
+      ['الإجمالي'],
+      async () => {
+        const data = await this.getPurchasingReport(startDate, endDate);
+        return mapRows(
+          data.details,
+          ['orderNumber', 'supplier', 'date', 'total', 'status'],
+          ['رقم أمر الشراء', 'المورد', 'التاريخ', 'الإجمالي', 'الحالة']
+        );
+      }
+    );
+
+    // 13) الإيجارات
+    await add(
+      'الإيجارات', 'تقرير الإيجارات',
+      ['تاريخ بداية المأمورية', 'تاريخ نهاية المأمورية', 'الجهة', 'وجهة السفر', 'نوع السيارة', 'النوع', 'عدد الأيام', 'رقم أمر الشغل', 'القيمة الايجارية', 'المبيت', 'بدل السائق', 'الاجمالي', 'حساب الجهة', 'بيانات السداد', 'السائق', 'رقم السيارة'],
+      ['عدد الأيام', 'القيمة الايجارية', 'المبيت', 'بدل السائق', 'الاجمالي'],
+      async () => this.getRentalsReport(startDate, endDate)
+    );
+
+    // 14) كروت الوقود
+    await add(
+      'كروت الوقود', 'تقرير كروت الوقود',
+      ['م', 'رقم اللوحه', 'نوع المنتج', 'نوع الكارت', 'رقم الكارت'],
+      [],
+      async () => this.getFuelCardsReport()
+    );
+
+    // 15/16/17) تقارير المركبات (بدون فترة زمنية)
+    const vehicleHeaders = [
+      'اسم البيان', 'نوع البيان', 'الموديل', 'رقم العربة', 'سنة الصنع',
+      'رقم الشاسية', 'رقم الماتور', 'حالة الرخصة', 'انتهاء الترخيص', 'اللون',
+      'الحمولة المدونة ', 'نوع الوقود', 'مكان تواجد العربة', 'عدد الخطوط لكل مركبة',
+      'نسبة الصلاحية الفنية', 'الحالة الفنية للمركبة', 'نوع الاصلاح',
+      'نسبة اصلاح العطل', 'ملاحظات',
+    ];
+    await add('أتوبيس-ميني باص-ميكروباص', 'الأتوبيس - ميني باص - ميكروباص', vehicleHeaders, [], async () => this.getBusReport());
+    await add('بيك اب-نقل-لوري', 'البيك اب - النقل - اللوري', vehicleHeaders, [], async () => this.getTruckReport());
+    await add('الملاكي', 'تقرير الملاكي', vehicleHeaders, [], async () => this.getPrivateReport());
+
+    return sections;
+  }
+
+  async getAllReportsExcel(startDate: string, endDate: string): Promise<string> {
+    const sections = await this.buildAllReportsSections(startDate, endDate);
+
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'Fleet ERP';
+    workbook.created = new Date();
+
+    // ---------- شيت الفهرس (بيتكتب الأول عشان يبقى أول شيت) ----------
+    const indexSheet = this.createArabicWorksheet(workbook, 'الفهرس');
+    const idxTitle = indexSheet.addRow(['التقرير الشامل المجمّع']);
+    indexSheet.mergeCells(idxTitle.number, 1, idxTitle.number, 4);
+    idxTitle.getCell(1).font = { bold: true, size: 16 };
+    idxTitle.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' };
+    idxTitle.height = 28;
+
+    const idxPeriod = indexSheet.addRow([`من ${startDate} إلى ${endDate}`]);
+    indexSheet.mergeCells(idxPeriod.number, 1, idxPeriod.number, 4);
+    idxPeriod.getCell(1).font = { bold: true, size: 12 };
+    idxPeriod.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' };
+    indexSheet.addRow([]);
+
+    this.styleHeaderRow(indexSheet.addRow(['م', 'التقرير', 'عدد السجلات', 'الحالة']));
+
+    sections.forEach((s, i) => {
+      const row = indexSheet.addRow([
+        i + 1,
+        { text: s.title, hyperlink: `#'${s.sheetName}'!A1` } as any,
+        s.rows.length,
+        s.error ? `تعذر التحميل: ${s.error}` : 'تم',
+      ]);
+      this.styleDataRow(row);
+      row.getCell(2).font = { size: 11, color: { argb: 'FF0563C1' }, underline: true };
+    });
+    this.autoFitColumns(indexSheet);
+
+    // ---------- شيت لكل تقرير ----------
+    for (const s of sections) {
+      const sheet = this.createArabicWorksheet(workbook, s.sheetName);
+      const colCount = s.headers.length;
+
+      const titleRow = sheet.addRow([s.title]);
+      sheet.mergeCells(titleRow.number, 1, titleRow.number, Math.max(colCount, 1));
+      titleRow.getCell(1).font = { bold: true, size: 16 };
+      titleRow.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' };
+      titleRow.height = 28;
+
+      const periodRow = sheet.addRow([`من ${startDate} إلى ${endDate}`]);
+      sheet.mergeCells(periodRow.number, 1, periodRow.number, Math.max(colCount, 1));
+      periodRow.getCell(1).font = { bold: true, size: 12 };
+      periodRow.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' };
+      sheet.addRow([]);
+
+      const headerRow = sheet.addRow(s.headers);
+      this.styleHeaderRow(headerRow);
+
+      const firstDataRow = headerRow.number + 1;
+      for (const item of s.rows) {
+        const values = s.headers.map((h) => {
+          const v = item?.[h];
+          if (v === null || v === undefined) return '';
+          if (v instanceof Date) return v;
+          if (typeof v === 'object') return JSON.stringify(v);
+          return v;
+        });
+        this.styleDataRow(sheet.addRow(values));
+      }
+      const lastDataRow = firstDataRow + s.rows.length - 1;
+
+      // ---------- صف الإجمالي ----------
+      const custom = s.customTotals ? s.customTotals(s.rows) : {};
+      const totalValues: any[] = s.headers.map((h, ci) => {
+        if (ci === 0) return `الإجمالي (${s.rows.length} سجل)`;
+        if (s.sumColumns.includes(h)) {
+          if (s.rows.length === 0) return 0;
+          const total = s.rows.reduce(
+            (sum, r) => sum + (Number(String(r?.[h] ?? '').replace(/,/g, '')) || 0),
+            0
+          );
+          const letter = sheet.getColumn(ci + 1).letter;
+          return { formula: `SUM(${letter}${firstDataRow}:${letter}${lastDataRow})`, result: total };
+        }
+        if (h in custom) return custom[h];
+        return '';
+      });
+
+      const totalRow = sheet.addRow(totalValues);
+      this.styleDataRow(totalRow);
+      totalRow.eachCell((c) => {
+        c.font = { bold: true, size: 12 };
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8E8E8' } };
+      });
+      s.headers.forEach((h, ci) => {
+        if (s.sumColumns.includes(h) || h in custom) {
+          const cell = totalRow.getCell(ci + 1);
+          const raw: any = cell.value;
+          const n = typeof raw === 'number' ? raw : Number(raw?.result) || 0;
+          cell.numFmt = Number.isInteger(n) ? '#,##0' : '#,##0.00';
+        }
+      });
+      totalRow.height = 24;
+
+      sheet.views = [{ rightToLeft: true, state: 'frozen', ySplit: headerRow.number }];
+      this.autoFitColumns(sheet);
+    }
+
+    const uploadDir = path.join(process.cwd(), 'uploads', 'reports');
+    if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+    const filePath = path.join(uploadDir, `التقرير_الشامل_${Date.now()}.xlsx`);
+    await workbook.xlsx.writeFile(filePath);
+    logger.info(`✅ Comprehensive report exported: ${filePath}`);
+    return filePath;
+  }
+
+  // ============================================================
   // ===== تصدير Excel و PDF عام =====
   // ============================================================
 

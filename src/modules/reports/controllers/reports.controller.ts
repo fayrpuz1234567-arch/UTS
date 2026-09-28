@@ -578,6 +578,36 @@ export class ReportsController {
   );
 
   // ============================================================
+  // ===== التقرير الشامل المجمّع (كل التقارير في ملف Excel واحد) =====
+  // ============================================================
+
+  /**
+   * GET /reports/comprehensive/:startDate/:endDate/excel
+   */
+  getAllReportsExcel = asyncHandler(
+    async (req: Request, res: Response): Promise<void> => {
+      const { startDate, endDate } = req.params;
+
+      const dateValidation = this.validateDates(startDate, endDate);
+      if (!dateValidation.valid) {
+        res.status(400).json({ success: false, message: dateValidation.message });
+        return;
+      }
+
+      try {
+        const filePath = await this.reportsService.getAllReportsExcel(startDate, endDate);
+        this.downloadFile(res, filePath, `التقرير_الشامل_${this.getFormattedDate()}.xlsx`);
+      } catch (error: any) {
+        logger.error('Error generating comprehensive Excel report:', error);
+        res.status(500).json({
+          success: false,
+          message: error.message || 'حدث خطأ أثناء إنشاء التقرير الشامل',
+        });
+      }
+    }
+  );
+
+  // ============================================================
   // ===== Maintenance Reports =====
   // ============================================================
 

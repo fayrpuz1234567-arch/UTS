@@ -1,7 +1,7 @@
-import { initializeD1, getFirestore } from '../src/core/config/d1.config';
+import { initializeFirebase, getFirestore } from '../src/core/config/firebase.config';
 import { logger } from '../src/core/utils/logger';
 
-initializeD1();
+initializeFirebase();
 const db = getFirestore();
 
 async function seedDatabase() {

@@ -1,0 +1,23 @@
+warning: in the working copy of '.env.example', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'package.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/core/config/d1.config.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/modules/reports/controllers/reports.controller.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/modules/reports/routes/index.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/modules/reports/services/reports.service.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/modules/users/controllers/user.controller.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/modules/users/routes/index.ts', LF will be replaced by CRLF the next time Git touches it
+ .env.example                                       |   2 [32m+[m[31m-[m
+ package.json                                       |   4 [32m+[m[31m-[m
+ scripts/import-data.ts                             |   6 [32m+[m[31m-[m
+ scripts/seed-database.ts                           |   4 [32m+[m[31m-[m
+ src/core/config/d1.config.ts                       |  81 [32m+[m[31m---[m
+ src/modules/auth/controllers/auth.controller.ts    |   8 [32m+[m[31m-[m
+ src/modules/auth/services/auth.service.ts          |  12 [32m+[m
+ .../reports/controllers/reports.controller.ts      |  30 [32m++[m
+ src/modules/reports/routes/index.ts                |   3 [32m+[m
+ src/modules/reports/services/reports.service.ts    | 413 [32m+++++++++++++++++++++[m
+ src/modules/trusts/services/trust.service.ts       |   4 [32m+[m[31m-[m
+ src/modules/users/controllers/user.controller.ts   |  22 [32m++[m
+ src/modules/users/routes/index.ts                  |   3 [32m+[m[31m-[m
+ src/modules/users/services/user.service.ts         |  66 [32m++++[m
+ 14 files changed, 571 insertions(+), 87 deletions(-)
