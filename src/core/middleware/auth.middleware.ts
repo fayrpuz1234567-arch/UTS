@@ -83,7 +83,14 @@ export const authenticate = async (
     let allowedPages = decoded.allowedPages || [];
 
     try {
-      const freshUser = await userRepo.findById(decoded.id);
+      // ✅ FIX: findByIdOrThrow (مش findById) — findById العادية كانت بتبلع
+      // أي عطل عابر في الاتصال بقاعدة البيانات وترجع null، فالسطر اللي
+      // تحت كان يفسّرها "الحساب اتمسح" ويعمل تسجيل خروج إجباري للمستخدم
+      // كل ما تحصل هزّة شبكة بسيطة — وده كان بيحصل مع كل Request محتاج
+      // تسجيل دخول (كل فتح صفحة، كل زرار)، فاحتمال حدوثه خلال الجلسة كان
+      // عالي. دلوقتي أي خطأ حقيقي في القراءة بيوقع في catch تحت ويكمّل
+      // بصلاحيات التوكن القديمة بدل ما يطرد المستخدم غلط.
+      const freshUser = await userRepo.findByIdOrThrow(decoded.id);
       if (!freshUser || freshUser.isDeleted) {
         res.status(401).json({
           success: false,

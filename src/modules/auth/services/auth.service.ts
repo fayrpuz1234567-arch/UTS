@@ -9,7 +9,18 @@ export class AuthService {
   constructor(private userRepo: UserRepository) {}
 
   async login(loginData: LoginDTO, ip: string, device: string): Promise<AuthResponse> {
-    const user = await this.userRepo.findByUsername(loginData.username);
+    // ✅ FIX: findByUsernameOrThrow بدل findByUsername — لو القراءة فشلت
+    // فعليًا (تايم آوت/عطل شبكة عابر) بترمي الخطأ هنا بدل ما ترجّع null
+    // بصمت، فبنقدر نفرّق بين "المستخدم مش موجود فعلاً" (401) و"تعذر
+    // الاتصال بالخادم مؤقتًا" (503: نفس رسالة "الخادم لا يستجيب" اللي
+    // المستخدم شايفها فعلاً، بدل رسالة "بياناتك غلط" المضلّلة).
+    let user;
+    try {
+      user = await this.userRepo.findByUsernameOrThrow(loginData.username);
+    } catch (error) {
+      logger.error(`Login lookup failed for "${loginData.username}": ${error}`);
+      throw new AppError('تعذر الاتصال بالخادم، برجاء المحاولة مرة أخرى بعد قليل', 503);
+    }
     if (!user) {
       throw new AppError('Invalid credentials', 401);
     }
@@ -20,28 +31,53 @@ export class AuthService {
         throw new AppError('Account is locked. Please try again later.', 403);
       } else {
         await this.userRepo.resetFailedAttempts(user.id);
+        // ✅ نحدّث النسخة في الذاكرة كمان عشان باقي الدالة (roles/permissions
+        // تحت) تشتغل على حالة الحساب الفعلية من غير ما نحتاج نعيد قراءته
+        user.status = 'active';
+        user.failedLoginAttempts = 0;
+        user.accountLockedUntil = undefined;
       }
     }
 
     // Verify password
     const isPasswordValid = await bcrypt.compare(loginData.password, user.passwordHash);
     if (!isPasswordValid) {
-      await this.userRepo.incrementFailedAttempts(user.id);
+      // ده لازم ينتظر (await) عشان عداد المحاولات/القفل يفضل دقيق حتى لو
+      // المستخدم قفل المتصفح فورًا بعد الخطأ
+      await this.userRepo
+        .incrementFailedAttempts(user.id)
+        .catch(err => logger.warn(`Could not record failed login attempt for ${user!.id}: ${err}`));
       throw new AppError('Invalid credentials', 401);
     }
 
-    // Reset failed attempts on successful login
-    await this.userRepo.resetFailedAttempts(user.id);
-    await this.userRepo.updateLastLogin(user.id, ip, device);
-
-    // Get user roles and permissions
-    const roles = await this.userRepo.getUserRoles(user.id);
-    const permissions = await this.userRepo.getUserPermissions(user.id);
+    // ✅ FIX: أهم تسريع لتسجيل الدخول — كانت الدالة بتعمل 4 نداءات إضافية
+    // متتالية لقاعدة البيانات بعد التحقق من كلمة السر (resetFailedAttempts،
+    // updateLastLogin، getUserRoles، getUserPermissions)، وكل نداء منهم في
+    // الحقيقة HTTP request لسيرفرات Cloudflare (مش استعلام محلي سريع)،
+    // وبعضها (update) بيعمل قراءة قبل الكتابة وقراءة تانية بعدها = 3 نداءات
+    // لوحده. ده كان بيضيف تأخير حقيقي محسوس على كل عملية دخول ناجحة.
+    // roles/permissions/allowedPages أصلاً موجودين في السجل اللي جبناه فوق
+    // من غير ما نحتاج نعيد قراءته تاني، وتحديث "آخر دخول" مجرد إحصائية
+    // (وقت/IP/جهاز) مش لازم المستخدم يستناها قبل ما ياخد التوكن بتاعه —
+    // فبنبعتها في الخلفية (من غير await) بعد ما نجهّز الرد.
+    const roles = user.roles || [];
+    const permissions = user.permissions || [];
     const allowedPages = user.allowedPages || [];
 
     // Generate tokens
     const accessToken = this.generateAccessToken(user, permissions, allowedPages);
     const refreshToken = this.generateRefreshToken(user);
+
+    void this.userRepo
+      .update(user.id, {
+        failedLoginAttempts: 0,
+        accountLockedUntil: undefined,
+        status: 'active',
+        lastLoginAt: new Date().toISOString(),
+        lastLoginIP: ip,
+        lastLoginDevice: device
+      })
+      .catch(err => logger.warn(`Could not update last-login stats for ${user!.id}: ${err}`));
 
     return {
       access_token: accessToken,

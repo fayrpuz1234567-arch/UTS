@@ -15,6 +15,15 @@ export class UserRepository extends BaseRepository<User> {
     return this.findOne({ username });
   }
 
+  // ✅ FIX: نسخة تسجيل الدخول — لو القراءة فشلت فعليًا (شبكة/تايم آوت) بترمي
+  // الخطأ بدل ما ترجّع null (زي findOne العادية)، عشان login() في
+  // auth.service.ts يقدر يفرّق بين "المستخدم مش موجود فعلاً" (401: بيانات
+  // غلط) و"تعذر الاتصال بالخادم" (503: حاول تاني) بدل ما يورّي المستخدم
+  // "بياناتك غلط" وهي أصلاً صح.
+  async findByUsernameOrThrow(username: string): Promise<User | null> {
+    return this.findOneOrThrow({ username });
+  }
+
   async findByPhone(phone: string): Promise<User | null> {
     return this.findOne({ phone });
   }

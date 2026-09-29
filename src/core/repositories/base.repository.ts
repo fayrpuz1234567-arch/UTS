@@ -213,6 +213,25 @@ export abstract class BaseRepository<T> implements IRepository<T> {
   }
 
   /**
+   * ✅ FIX: زي findById بالظبط، لكن من غير ما "تبلع" الأخطاء الحقيقية
+   * (تايم آوت / انقطاع شبكة / عطل مؤقت في Cloudflare) وترجعها null.
+   * findById العادية بترجع null في الحالتين (مش موجود فعلاً، أو القراءة
+   * فشلت)، وده كان بيخلي auth.middleware.ts يعتبر أي عطل عابر في الشبكة
+   * "الحساب اتمسح" ويعمل تسجيل خروج إجباري للمستخدم غلط. الميثود دي
+   * بترجع null بس لو السجل مش موجود فعلاً (أو محذوف)، وأي خطأ حقيقي
+   * بترميه للمستدعي يقرر هو يتصرف فيه إزاي (يرجع لبيانات التوكن مثلاً).
+   * استخدمها في أي قرار حساس (تسجيل الدخول/التحقق من الجلسة) بس —
+   * findById العادية تفضل زي ما هي لباقي الموديولات عشان منكسرش سلوكهم.
+   */
+  async findByIdOrThrow(id: string): Promise<T | null> {
+    const doc = await this.collection.doc(id).get();
+    if (!doc.exists) return null;
+    const data = doc.data();
+    if (data?.isDeleted) return null;
+    return data as T;
+  }
+
+  /**
    * ✅ FIX: كان الكود بيستخدم query.where('isDeleted', '==', false) داخل
    * الاستعلام نفسه في Firestore. فايرستور بيتعامل مع الفلتر ده كفلتر صارم:
    * أي مستند مالوش الحقل isDeleted أصلاً (مش موجود إطلاقًا، مش حتى false)
@@ -392,6 +411,27 @@ export abstract class BaseRepository<T> implements IRepository<T> {
       logger.error(`Error finding one document: ${error}`);
       return null;
     }
+  }
+
+  /**
+   * ✅ FIX: نسخة من findOne من غير ما تبلع الأخطاء الحقيقية — راجع تعليق
+   * findByIdOrThrow فوق لنفس السبب. مستخدمة في تسجيل الدخول عشان لو
+   * الاتصال بالقاعدة فشل مؤقتًا، المستخدم ياخد رسالة "تعذر الاتصال
+   * بالخادم" الصحيحة بدل "اسم المستخدم أو كلمة المرور غلط" المضلّلة.
+   */
+  async findOneOrThrow(filter: FilterOptions): Promise<T | null> {
+    let query: D1Query = this.collection;
+    query = this.applyFilters(query, filter);
+    query = query.limit(20);
+
+    const snapshot = await query.get();
+    for (const doc of snapshot.docs) {
+      const data = doc.data();
+      if (!data?.isDeleted) {
+        return data as T;
+      }
+    }
+    return null;
   }
 
   /**

@@ -58,32 +58,91 @@ const getConfig = (): D1EnvConfig => {
   return cachedConfig;
 };
 
-// ✅ D1 بيتقفل عادة بعد فترة قصيرة من عدم الاستخدام، وأول query بعد كده
-// بياخد وقت أطول شوية (cold start) — ده طبيعي وبيتحمله الكود عادي زي أي
-// HTTP request تاني، مفيش داعي لأي معالجة خاصة.
+// ✅ FIX: كل قراءة/كتابة هنا في الحقيقة HTTP request لسيرفرات Cloudflare
+// عبر الإنترنت (مش اتصال مباشر بقاعدة بيانات جوه نفس الشبكة). من غير أي
+// timeout، لو الشبكة أو Cloudflare اتأخروا لحظة (D1 cold start، أو ضغط
+// مؤقت) كان الـ request يفضل معلّق من غير حد أقصى، وده اللي بيظهر للمستخدم
+// كـ"الخادم لا يستجيب". ومن غير إعادة محاولة، أي عطل عابر (Timeout/انقطاع
+// شبكة لحظي/429 Rate Limit من Cloudflare) كان بيتحول لخطأ نهائي فورًا —
+// وده أصل مشكلة "الاسم والباسورد صح وبيقول غلط" و"الحساب مبقاش موجود"
+// (راجع findById/findOne في base.repository.ts: بيبلعوا أي Error هنا
+// ويرجعوا null، فالتفريق بين "مش موجود فعلاً" و"القراءة فشلت مؤقتًا" كان
+// بيضيع من هنا بالظبط).
+//
+// الحل: timeout واضح (بدل التعليق اللانهائي) + إعادة محاولة محدودة
+// (Timeout / خطأ شبكة / 429 / أخطاء 5xx بس — مش أخطاء SQL أو صلاحيات، دي
+// مفيش فايدة من إعادة محاولتها) بتأخير متزايد بسيط بين كل محاولة.
+const D1_TIMEOUT_MS = 10000;
+const D1_MAX_RETRIES = 2;
+const D1_RETRY_BASE_DELAY_MS = 300;
+
+const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
+
+const isRetryableHttpStatus = (status: number): boolean => status === 429 || (status >= 500 && status <= 599);
+
 const runD1Query = async (sql: string, params: any[] = []): Promise<any[]> => {
   const { accountId, databaseId, apiToken } = getConfig();
   const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/d1/database/${databaseId}/query`;
 
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiToken}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({ sql, params })
-  });
+  let lastError: any = null;
 
-  const json: any = await res.json();
+  for (let attempt = 0; attempt <= D1_MAX_RETRIES; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), D1_TIMEOUT_MS);
 
-  if (!res.ok || !json.success) {
-    const errMsg = json?.errors?.map((e: any) => e.message).join(', ') || res.statusText;
-    logger.error(`D1 query failed: ${errMsg} | SQL: ${sql}`);
-    throw new Error(`D1 query failed: ${errMsg}`);
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ sql, params }),
+        signal: controller.signal
+      });
+      clearTimeout(timer);
+
+      if (!res.ok && isRetryableHttpStatus(res.status) && attempt < D1_MAX_RETRIES) {
+        lastError = new Error(`D1 query failed with HTTP ${res.status}`);
+        logger.warn(`D1 query attempt ${attempt + 1} got HTTP ${res.status}, retrying... | SQL: ${sql}`);
+        await sleep(D1_RETRY_BASE_DELAY_MS * Math.pow(2, attempt));
+        continue;
+      }
+
+      const json: any = await res.json();
+
+      if (!res.ok || !json.success) {
+        const errMsg = json?.errors?.map((e: any) => e.message).join(', ') || res.statusText;
+        logger.error(`D1 query failed: ${errMsg} | SQL: ${sql}`);
+        throw new Error(`D1 query failed: ${errMsg}`);
+      }
+
+      // Cloudflare بترجع النتيجة كمصفوفة (batch)، كل عنصر فيه results
+      return json.result?.[0]?.results ?? [];
+    } catch (error: any) {
+      clearTimeout(timer);
+
+      if (error?.name === 'AbortError') {
+        lastError = new Error(`D1 query timed out after ${D1_TIMEOUT_MS}ms | SQL: ${sql}`);
+      } else if (error instanceof TypeError) {
+        // fetch() بيرمي TypeError لأي فشل شبكة (DNS/انقطاع اتصال/...)
+        lastError = error;
+      } else {
+        // خطأ حقيقي من Cloudflare (SQL غلط، صلاحيات، ...) — مفيش فايدة
+        // من إعادة المحاولة، نرميه فورًا.
+        throw error;
+      }
+
+      if (attempt < D1_MAX_RETRIES) {
+        logger.warn(`D1 query attempt ${attempt + 1} failed (${lastError.message}), retrying...`);
+        await sleep(D1_RETRY_BASE_DELAY_MS * Math.pow(2, attempt));
+        continue;
+      }
+      throw lastError;
+    }
   }
 
-  // Cloudflare بترجع النتيجة كمصفوفة (batch)، كل عنصر فيه results
-  return json.result?.[0]?.results ?? [];
+  throw lastError ?? new Error(`D1 query failed after ${D1_MAX_RETRIES + 1} attempts | SQL: ${sql}`);
 };
 
 // ============================================================
